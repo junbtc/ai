@@ -1,0 +1,52 @@
+# .github/workflows/deploy.yml
+name: Full Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - v*:  # 支持版本标签部署
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      build-artifacts:〔 steps.build.outputs.build-artifacts ]]
+    
+  build:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          docker-compose -f docker/docker-compose.yml up --build
+      
+      - name: Run tests
+        run: |
+          docker-compose -f docker/docker-compose.test.yml run --rm tester pytest backend/tests/
+      
+      - name: Build Docker image
+        run: |
+          docker-compose -f docker/docker-compose.prod.yml build --tag ${{ github.sha }} .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v2
+      
+      - name: Deploy to ECS
+        uses: aws-actions/aws-ecs-deploy@v2
+        with:
+          cluster: quant-bot-cluster
+          service: quant-bot-service
+          task-definition: quant-bot-task
+          force-new-deployment: true
+      
+      - name: Update Model Version
+        env:
+          BOTO3_SESSION_TOKEN: ${{ secrets.AWS_BOTO3_TOKEN }}
+        run: |
+          aws s3 cp backend/models/model_v2.pth s3://quant-bot-models/
